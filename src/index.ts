@@ -7,6 +7,8 @@
  * - "Mark item 123 as done"
  * - "Remove item 456"
  * - "Update item 789 to 'new title'"
+ * - "Move item 123 to my work list"
+ * - "Add note to item 123: remember to call back"
  */
 
 import fetch from 'node-fetch';
@@ -46,12 +48,12 @@ function parseIntent(input: string): ParsedIntent {
   const quotedMatch = input.match(/["']([^"']+)["']/);
   const itemText = quotedMatch ? quotedMatch[1] : undefined;
   
-  // Extract list name: "to my X list" or "to X list" or "in X list"
-  const listMatch = lower.match(/(?:to|in|on)\s+(?:my\s+)?(\w+)\s+list/);
+  // Extract list name: "to my X list", "in my X list", "get my X list", "show X list"
+  const listMatch = lower.match(/(?:to|in|on|get|show|view)?\s*(?:my\s+)?(\w+['']?\w*)\s+list/);
   const listName = listMatch ? listMatch[1] : undefined;
   
-  // Extract item ID: "item 123" or "id 123" or "#123"
-  const idMatch = lower.match(/(?:item\s*|id\s*|#)(\d+)/);
+  // Extract item ID: "item 123" or "id 123" or "#123" or MongoDB ObjectId (24 hex chars)
+  const idMatch = lower.match(/(?:item\s*|id\s*|#)([a-f0-9]{24}|\d+)/i);
   const itemId = idMatch ? idMatch[1] : undefined;
   
   // Priority flag
@@ -113,9 +115,16 @@ class ListerClient {
 
   private getAuthHeader(): Record<string, string> {
     return {
-      'Authorization': `Bearer ${this.apiKey}`,
+      'X-API-Key': this.apiKey,
       'Content-Type': 'application/json',
     };
+  }
+
+  private async parseResponse(res: any): Promise<{ ok: boolean; data: any }> {
+    const raw = await res.json() as any;
+    // API wraps data in { success, data } or returns array
+    const items = Array.isArray(raw) ? raw : (raw.data ?? raw);
+    return { ok: res.ok, data: items };
   }
 
   async getLists(): Promise<ListerResponse> {
@@ -123,8 +132,9 @@ class ListerClient {
       const res = await fetch(`${this.baseUrl}/api/lists`, {
         headers: this.getAuthHeader(),
       });
-      const data = await res.json() as any;
-      return { success: res.ok, message: `Found ${data?.length ?? 0} lists`, data };
+      const { ok, data } = await this.parseResponse(res);
+      const lists = Array.isArray(data) ? data : [];
+      return { success: ok, message: `Found ${lists.length} lists`, data: lists };
     } catch (err) {
       return { success: false, message: `Error fetching lists: ${err}` };
     }
@@ -149,22 +159,30 @@ class ListerClient {
       const res = await fetch(`${this.baseUrl}/api/lists/${listId}/items`, {
         headers: this.getAuthHeader(),
       });
-      const data = await res.json() as any;
-      return { success: res.ok, message: `Found ${data?.length ?? 0} items`, data };
+      const { ok, data } = await this.parseResponse(res);
+      const items = Array.isArray(data) ? data : [];
+      return { success: ok, message: `Found ${items.length} items`, data: items };
     } catch (err) {
       return { success: false, message: `Error fetching items: ${err}` };
     }
   }
 
-  async addItem(listId: string, item: { text: string; priority?: boolean }): Promise<ListerResponse> {
+  async addItem(listId: string, content: string, isPriority: boolean): Promise<ListerResponse> {
     try {
+      const body = {
+        content,
+        type: 'text',
+        status: 'new',
+        listId,
+        isPriority,
+      };
       const res = await fetch(`${this.baseUrl}/api/lists/${listId}/items`, {
         method: 'POST',
         headers: this.getAuthHeader(),
-        body: JSON.stringify({ text: item.text, priority: item.priority || false }),
+        body: JSON.stringify(body),
       });
       const data = await res.json() as any;
-      return { success: res.ok, message: res.ok ? `'${item.text}' added to list` : `Failed: ${data?.detail ?? res.statusText}`, data };
+      return { success: res.ok, message: res.ok ? `'${content}' added to list` : `Failed: ${JSON.stringify(data?.detail ?? res.statusText)}`, data };
     } catch (err) {
       return { success: false, message: `Error adding item: ${err}` };
     }
@@ -178,7 +196,7 @@ class ListerClient {
         body: JSON.stringify(updates),
       });
       const data = await res.json() as any;
-      return { success: res.ok, message: res.ok ? 'Item updated' : `Failed: ${data?.detail ?? res.statusText}`, data };
+      return { success: res.ok, message: res.ok ? 'Item updated' : `Failed: ${JSON.stringify(data?.detail ?? res.statusText)}`, data };
     } catch (err) {
       return { success: false, message: `Error updating item: ${err}` };
     }
@@ -196,15 +214,29 @@ class ListerClient {
     }
   }
 
-  async addNote(itemId: string, note: string): Promise<ListerResponse> {
+  async moveItem(itemId: string, targetListId: string): Promise<ListerResponse> {
+    try {
+      const res = await fetch(`${this.baseUrl}/api/items/${itemId}/move`, {
+        method: 'POST',
+        headers: this.getAuthHeader(),
+        body: JSON.stringify({ targetListId }),
+      });
+      const data = await res.json() as any;
+      return { success: res.ok, message: res.ok ? 'Item moved' : `Failed: ${JSON.stringify(data?.detail ?? res.statusText)}`, data };
+    } catch (err) {
+      return { success: false, message: `Error moving item: ${err}` };
+    }
+  }
+
+  async addNote(itemId: string, content: string): Promise<ListerResponse> {
     try {
       const res = await fetch(`${this.baseUrl}/api/items/${itemId}/notes`, {
         method: 'POST',
         headers: this.getAuthHeader(),
-        body: JSON.stringify({ text: note }),
+        body: JSON.stringify({ content }),
       });
       const data = await res.json() as any;
-      return { success: res.ok, message: res.ok ? 'Note added' : `Failed: ${data?.detail ?? res.statusText}`, data };
+      return { success: res.ok, message: res.ok ? 'Note added' : `Failed: ${JSON.stringify(data?.detail ?? res.statusText)}`, data };
     } catch (err) {
       return { success: false, message: `Error adding note: ${err}` };
     }
@@ -215,12 +247,32 @@ class ListerClient {
       const res = await fetch(`${this.baseUrl}/api/items/priority`, {
         headers: this.getAuthHeader(),
       });
-      const data = await res.json() as any;
-      return { success: res.ok, message: `Found ${data?.length ?? 0} priority items`, data };
+      const { ok, data } = await this.parseResponse(res);
+      const items = Array.isArray(data) ? data : [];
+      return { success: ok, message: `Found ${items.length} priority items`, data: items };
     } catch (err) {
       return { success: false, message: `Error fetching priority items: ${err}` };
     }
   }
+}
+
+// ─── List Name Matching ─────────────────────────────────────────────────────
+function findListByName(lists: any[], searchName: string): any | undefined {
+  const lower = searchName.toLowerCase().replace(/["']/g, '');
+  // Exact match (case-insensitive)
+  let match = lists.find(l => l.name?.toLowerCase() === lower);
+  if (match) return match;
+  // Starts-with match
+  match = lists.find(l => l.name?.toLowerCase().startsWith(lower));
+  if (match) return match;
+  // Contains match
+  match = lists.find(l => l.name?.toLowerCase().includes(lower));
+  if (match) return match;
+  // Remove possessive/punctuation and try again
+  const clean = lower.replace(/['']s$/, '').replace(/[^a-z0-9]/g, '');
+  match = lists.find(l => l.name?.toLowerCase().replace(/[^a-z0-9]/g, '').includes(clean));
+  if (match) return match;
+  return undefined;
 }
 
 // ─── Response Formatter ──────────────────────────────────────────────────────
@@ -236,9 +288,9 @@ function formatResponse(response: ListerResponse): string {
       msg += '\n_(empty)_';
     } else {
       msg += response.data.map((item: any, i: number) => {
-        const title = item.text || item.name || item.title || `Item ${i + 1}`;
-        const priority = item.priority ? ' 🔥' : '';
-        const done = item.done || item.completed ? ' ✅' : '';
+        const title = item.content || item.text || item.name || item.title || `Item ${i + 1}`;
+        const priority = item.isPriority ? ' 🔥' : '';
+        const done = item.status === 'complete' ? ' ✅' : '';
         return `${i + 1}. ${title}${priority}${done}`;
       }).join('\n');
     }
@@ -247,6 +299,20 @@ function formatResponse(response: ListerResponse): string {
   }
   
   return msg;
+}
+
+// ─── Helper: Resolve list with error ─────────────────────────────────────────
+async function resolveList(listName: string): Promise<{ list: any } | { error: string }> {
+  const lists = await client.getLists();
+  if (!lists.success || !Array.isArray(lists.data)) {
+    return { error: `❌ Could not fetch lists: ${lists.message}` };
+  }
+  const list = findListByName(lists.data, listName);
+  if (!list) {
+    const names = lists.data.map((l: any) => l.name).join(', ');
+    return { error: `❌ List '${listName}' not found. Available: ${names}` };
+  }
+  return { list };
 }
 
 // ─── Main Handler ────────────────────────────────────────────────────────────
@@ -263,43 +329,25 @@ export async function handleCommand(input: string): Promise<string> {
       if (!parsed.entities.listName) {
         return '❌ Please specify which list (e.g., "to my today list")';
       }
-      // First find the list ID by name
-      const lists = await client.getLists();
-      if (!lists.success || !Array.isArray(lists.data)) {
-        return `❌ Could not find lists: ${lists.message}`;
-      }
-      const list = (lists.data as any[]).find(l => 
-        l.name?.toLowerCase() === parsed.entities.listName?.toLowerCase()
+      const result = await resolveList(parsed.entities.listName);
+      if ('error' in result) return result.error;
+      const addResult = await client.addItem(
+        result.list._id,
+        parsed.entities.itemText,
+        parsed.entities.priority ?? false,
       );
-      if (!list) {
-        return `❌ List '${parsed.entities.listName}' not found`;
-      }
-      const result = await client.addItem(list.id, {
-        text: parsed.entities.itemText,
-        priority: parsed.entities.priority,
-      });
-      return formatResponse(result);
+      return formatResponse(addResult);
     }
     
     case 'get_items': {
       if (!parsed.entities.listName) {
-        // Get all lists
         const result = await client.getLists();
         return formatResponse(result);
       }
-      // Find list and get items
-      const lists = await client.getLists();
-      if (!lists.success || !Array.isArray(lists.data)) {
-        return `❌ Could not find lists: ${lists.message}`;
-      }
-      const list = (lists.data as any[]).find(l => 
-        l.name?.toLowerCase() === parsed.entities.listName?.toLowerCase()
-      );
-      if (!list) {
-        return `❌ List '${parsed.entities.listName}' not found`;
-      }
-      const result = await client.getItems(list.id);
-      return formatResponse(result);
+      const result = await resolveList(parsed.entities.listName);
+      if ('error' in result) return result.error;
+      const itemsResult = await client.getItems(result.list._id);
+      return formatResponse(itemsResult);
     }
     
     case 'get_priority': {
@@ -311,7 +359,7 @@ export async function handleCommand(input: string): Promise<string> {
       if (!parsed.entities.itemId) {
         return '❌ Please specify which item to mark done (e.g., "mark item 123 done")';
       }
-      const result = await client.updateItem(parsed.entities.itemId, { done: true } as Record<string, any>);
+      const result = await client.updateItem(parsed.entities.itemId, { status: 'complete' });
       return formatResponse(result);
     }
     
@@ -327,9 +375,9 @@ export async function handleCommand(input: string): Promise<string> {
       if (!parsed.entities.itemId) {
         return '❌ Please specify which item to update (e.g., "update item 123")';
       }
-      const updates: any = {};
-      if (parsed.entities.itemText) updates.text = parsed.entities.itemText;
-      if (parsed.entities.priority) updates.priority = true;
+      const updates: Record<string, any> = {};
+      if (parsed.entities.itemText) updates.content = parsed.entities.itemText;
+      if (parsed.entities.priority) updates.isPriority = true;
       const result = await client.updateItem(parsed.entities.itemId, updates);
       return formatResponse(result);
     }
@@ -338,25 +386,15 @@ export async function handleCommand(input: string): Promise<string> {
       if (!parsed.entities.itemId || !parsed.entities.listName) {
         return '❌ Please specify item and target list (e.g., "move item 123 to my work list")';
       }
-      // Find target list
-      const lists = await client.getLists();
-      if (!lists.success || !Array.isArray(lists.data)) {
-        return `❌ Could not find lists: ${lists.message}`;
-      }
-      const list = (lists.data as any[]).find(l => 
-        l.name?.toLowerCase() === parsed.entities.listName?.toLowerCase()
-      );
-      if (!list) {
-        return `❌ List '${parsed.entities.listName}' not found`;
-      }
-      // Update item's list_id
-      const result = await client.updateItem(parsed.entities.itemId, { list_id: list.id } as Record<string, any>);
-      return formatResponse(result);
+      const result = await resolveList(parsed.entities.listName);
+      if ('error' in result) return result.error;
+      const moveResult = await client.moveItem(parsed.entities.itemId, result.list._id);
+      return formatResponse(moveResult);
     }
     
     case 'add_note': {
       if (!parsed.entities.itemId || !parsed.entities.note) {
-        return '❌ Please specify item and note (e.g., "note for item 123: \"remember to call back\"")';
+        return '❌ Please specify item and note (e.g., "note for item 123: \\"remember to call back\\"")';
       }
       const result = await client.addNote(parsed.entities.itemId, parsed.entities.note);
       return formatResponse(result);
