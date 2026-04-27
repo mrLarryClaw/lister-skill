@@ -1,0 +1,200 @@
+# Lister — Natural Language Task Management
+
+**Skill name:** `lister`
+**Description:** Natural language task management with Lister.ai — add, view, update, move, and organize to-do items across lists via conversational commands.
+
+## When to Use This Skill
+
+Use this skill whenever the user wants to manage tasks, to-do items, or lists using natural language. Trigger phrases include (but are not limited to):
+
+- **"add to list"** — create a new task item
+- **"get my lists"** — view all lists or items in a list
+- **"priority items"** — see urgent/important items
+- **"mark done"** — complete an item
+- **"remove item"** — delete an item
+- **"update item"** — change an item's text or priority
+- **"move item"** — transfer an item to another list
+- **"note for item"** — attach a note to an item
+
+## Configuration
+
+The following environment variables must be set before invoking the skill:
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `LISTER_BASE_URL` | No | Lister API base URL. Defaults to `https://lister-api-staging.up.railway.app` |
+| `LISTER_API_KEY` | **Yes** | Bearer token for authenticating with the Lister API |
+
+## How to Invoke
+
+The skill exposes a `handleCommand(input: string): Promise<string>` function. Pass any natural language string and receive a formatted response.
+
+**CLI:**
+```bash
+node dist/index.js <natural language command>
+```
+
+**As a module:**
+```typescript
+import { handleCommand } from './dist/index.js';
+const result = await handleCommand('add "buy milk" to my groceries list');
+console.log(result);
+```
+
+## Supported Commands
+
+### 1. Add Item
+Add a new task to a specific list. Use quotes for the task text. Mark items as priority with the word "priority" or "urgent".
+
+| Pattern | Example |
+|---------|---------|
+| `add "text" to my [list] list` | `add "call Notary" to my today list` |
+| `create "text" in [list] list` | `create "review contract" in work list` |
+| `put "text" on my [list] list` | `put "walk the dog" on my errands list` |
+| `add "text" to my [list] list` (priority) | `add "fix server outage" to my today list urgent` |
+
+**Keywords:** `add`, `create`, `new`, `put`
+
+### 2. Get / List Items
+View all items in a specific list, or show all lists if no list name is given.
+
+| Pattern | Example |
+|---------|---------|
+| `get my [list] list` | `get my today list` |
+| `show [list] list` | `show work list` |
+| `list [list] list` | `list groceries list` |
+| `get my lists` (no list name) | `get my lists` → shows all lists |
+| `view [list] list` | `view personal list` |
+| `find [list] list` | `find work list` |
+
+**Keywords:** `get`, `show`, `list`, `view`, `find`, `search`
+
+### 3. Priority Items
+Get all items marked as priority/urgent across all lists.
+
+| Pattern | Example |
+|---------|---------|
+| `get priority items` | `get priority items` |
+| `show urgent items` | `show urgent items` |
+| `get important items` | `get important items` |
+
+**Keywords:** `priority`, `urgent`, `important` (combined with `get`/`show`/`list`)
+
+### 4. Mark Done
+Mark a task item as completed.
+
+| Pattern | Example |
+|---------|---------|
+| `mark item [id] done` | `mark item 123 done` |
+| `complete item [id]` | `complete item 456` |
+| `finish item [id]` | `finish item 789` |
+| `done item [id]` | `done item 101` |
+
+**Keywords:** `mark`, `complete`, `done`, `finish`
+
+### 5. Remove Item
+Delete a task item permanently.
+
+| Pattern | Example |
+|---------|---------|
+| `remove item [id]` | `remove item 123` |
+| `delete item [id]` | `delete item 456` |
+| `drop item [id]` | `drop item 789` |
+| `clear item [id]` | `clear item 101` |
+
+**Keywords:** `remove`, `delete`, `drop`, `clear`
+
+### 6. Update Item
+Change an item's text or set it as priority.
+
+| Pattern | Example |
+|---------|---------|
+| `update item [id] to "new text"` | `update item 123 to "call Notary at 3pm"` |
+| `edit item [id] to "new text"` | `edit item 456 to "buy organic milk"` |
+| `change item [id] to "new text"` | `change item 789 to "schedule dentist"` |
+| `update item [id]` (priority) | `update item 123 priority` |
+
+**Keywords:** `update`, `edit`, `change`, `modify`, `rename`
+
+### 7. Move Item
+Transfer an item from its current list to another list.
+
+| Pattern | Example |
+|---------|---------|
+| `move item [id] to my [list] list` | `move item 123 to my work list` |
+| `transfer item [id] to [list] list` | `transfer item 456 to personal list` |
+
+**Keywords:** `move`, `transfer`
+
+### 8. Add Note
+Attach a note/comment to an item.
+
+| Pattern | Example |
+|---------|---------|
+| `note for item [id]: "text"` | `note for item 123: "remember to bring documents"` |
+| `comment for item [id]: "text"` | `comment for item 456: "follow up next week"` |
+| `memo for item [id]: "text"` | `memo for item 789: "waiting on response"` |
+
+**Keywords:** `note`, `comment`, `memo`
+
+## API Reference
+
+The skill communicates with the Lister REST API. The following endpoints are used internally:
+
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| `GET` | `/api/lists` | Fetch all lists |
+| `POST` | `/api/lists` | Create a new list |
+| `GET` | `/api/lists/{id}/items` | Get items in a list |
+| `POST` | `/api/lists/{id}/items` | Add an item to a list |
+| `PUT` | `/api/items/{id}` | Update an item (text, done, priority, list_id) |
+| `DELETE` | `/api/items/{id}` | Delete an item |
+| `POST` | `/api/items/{id}/notes` | Add a note to an item |
+| `GET` | `/api/items/priority` | Get all priority items |
+
+**Authentication:** Bearer token via `Authorization` header.
+
+## Response Format
+
+Responses are formatted with emoji indicators:
+
+- ✅ Success — followed by details or item lists
+- ❌ Error — with explanation of what went wrong
+- ❓ Unknown — with helpful suggestions
+
+Item lists include:
+- Numbered entries
+- 🔥 for priority items
+- ✅ for completed items
+
+## Error Handling
+
+The skill validates input before making API calls. Common validation messages:
+
+- Missing quoted text for add/update → prompts user to use quotes
+- Missing list name → prompts user to specify a list
+- Missing item ID → prompts user to provide an item ID
+- List not found → tells user the list name wasn't found
+- API errors → surfaces the error message from the API
+
+## File Layout
+
+```
+lister-skill/
+├── SKILL.md          ← This file (skill definition for OpenClaw)
+├── skill.json        ← Skill metadata
+├── src/
+│   └── index.ts      ← TypeScript source
+├── dist/
+│   └── index.js      ← Compiled JavaScript (entry point)
+├── package.json
+└── tsconfig.json
+```
+
+## Notes for Agents
+
+1. **Always quote item text** — the parser extracts text between quotes (`" "` or `' '`). If the user doesn't use quotes, ask them to.
+2. **List names are case-insensitive** — `today`, `Today`, and `TODAY` all match the same list.
+3. **Item IDs are numeric** — extracted from patterns like `item 123`, `id 123`, or `#123`.
+4. **The skill auto-resolves list names to IDs** — users don't need to know internal list IDs; they use friendly names.
+5. **If the list doesn't exist**, the skill will report an error — it does **not** auto-create lists. The user must create the list first or use an existing one.
