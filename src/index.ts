@@ -21,7 +21,8 @@ const CONFIG = {
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 type Intent = 'add_item' | 'get_items' | 'get_priority' | 'mark_done' | 
-              'remove_item' | 'update_item' | 'move_item' | 'add_note' | 'unknown';
+              'remove_item' | 'update_item' | 'move_item' | 'add_note' | 
+              'export_list' | 'export_priority' | 'email_list' | 'email_priority' | 'unknown';
 
 interface ParsedIntent {
   intent: Intent;
@@ -31,6 +32,10 @@ interface ParsedIntent {
     itemId?: string;
     priority?: boolean;
     note?: string;
+    format?: 'json' | 'html';
+    theme?: 'light' | 'dark';
+    email?: string;
+    includeArchived?: boolean;
   };
 }
 
@@ -56,10 +61,44 @@ function parseIntent(input: string): ParsedIntent {
   const idMatch = lower.match(/(?:item\s*|id\s*|#)([a-f0-9]{24}|\d+)/i);
   const itemId = idMatch ? idMatch[1] : undefined;
   
+  // Extract email: "to email@address.com"
+  const emailMatch = input.match(/to\s+([\w.+-]+@[\w.-]+\.[a-z]{2,})/i);
+  const email = emailMatch ? emailMatch[1] : undefined;
+  
+  // Extract format: "as json", "as html"
+  const formatMatch = lower.match(/as\s+(json|html)/i);
+  const format = formatMatch ? formatMatch[1] as 'json' | 'html' : undefined;
+  
+  // Extract theme: "theme light", "theme dark"
+  const themeMatch = lower.match(/theme\s+(light|dark)/i);
+  const theme = themeMatch ? themeMatch[1] as 'light' | 'dark' : undefined;
+  
+  // Include archived flag
+  const includeArchived = /include\s+archived|with\s+archived/i.test(lower);
   // Priority flag
   const priority = /priority|urgent|important/i.test(lower);
   
   // ── Intent Classification ──
+  
+  // Export priority items (check before generic export)
+  if (/^export\b/.test(lower) && priority) {
+    return { intent: 'export_priority', entities: { format, theme, includeArchived } };
+  }
+  
+  // Email priority items (check before generic email list)
+  if (/^email\b/.test(lower) && priority) {
+    return { intent: 'email_priority', entities: { email, theme, includeArchived } };
+  }
+  
+  // Export list
+  if (/^export\b/.test(lower)) {
+    return { intent: 'export_list', entities: { listName, format, theme, includeArchived } };
+  }
+  
+  // Email list
+  if (/^email\b/.test(lower) && /list/.test(lower)) {
+    return { intent: 'email_list', entities: { listName, email, theme, includeArchived } };
+  }
   
   // Add item
   if (/^(add|create|new|put)\b/.test(lower)) {
@@ -254,6 +293,98 @@ class ListerClient {
       return { success: false, message: `Error fetching priority items: ${err}` };
     }
   }
+
+  async exportList(listId: string, options: { format?: 'json' | 'html'; theme?: 'light' | 'dark'; includeArchived?: boolean; filename?: string }): Promise<ListerResponse> {
+    try {
+      const res = await fetch(`${this.baseUrl}/api/lists/${listId}/export`, {
+        method: 'POST',
+        headers: this.getAuthHeader(),
+        body: JSON.stringify({
+          format: options.format || 'json',
+          theme: options.theme,
+          includeArchived: options.includeArchived,
+          filename: options.filename,
+        }),
+      });
+      if (res.ok) {
+        const contentType = res.headers.get('content-type');
+        if (contentType?.includes('text/html')) {
+          const html = await res.text();
+          return { success: true, message: `List exported as HTML (${html.length} bytes)`, data: { format: 'html', size: html.length } };
+        }
+        const data = await res.json();
+        return { success: true, message: `List exported as JSON`, data };
+      }
+      const data = await res.json() as any;
+      return { success: false, message: `Failed: ${JSON.stringify(data?.detail ?? res.statusText)}`, data };
+    } catch (err) {
+      return { success: false, message: `Error exporting list: ${err}` };
+    }
+  }
+
+  async exportPriorityItems(options: { format?: 'json' | 'html'; theme?: 'light' | 'dark'; includeArchived?: boolean; filename?: string }): Promise<ListerResponse> {
+    try {
+      const res = await fetch(`${this.baseUrl}/api/items/priority/export`, {
+        method: 'POST',
+        headers: this.getAuthHeader(),
+        body: JSON.stringify({
+          format: options.format || 'json',
+          theme: options.theme,
+          includeArchived: options.includeArchived,
+          filename: options.filename,
+        }),
+      });
+      if (res.ok) {
+        const contentType = res.headers.get('content-type');
+        if (contentType?.includes('text/html')) {
+          const html = await res.text();
+          return { success: true, message: `Priority items exported as HTML (${html.length} bytes)`, data: { format: 'html', size: html.length } };
+        }
+        const data = await res.json();
+        return { success: true, message: `Priority items exported as JSON`, data };
+      }
+      const data = await res.json() as any;
+      return { success: false, message: `Failed: ${JSON.stringify(data?.detail ?? res.statusText)}`, data };
+    } catch (err) {
+      return { success: false, message: `Error exporting priority items: ${err}` };
+    }
+  }
+
+  async emailList(listId: string, options: { toEmail?: string; theme?: 'light' | 'dark'; includeArchived?: boolean }): Promise<ListerResponse> {
+    try {
+      const res = await fetch(`${this.baseUrl}/api/lists/${listId}/export/email`, {
+        method: 'POST',
+        headers: this.getAuthHeader(),
+        body: JSON.stringify({
+          toEmail: options.toEmail,
+          theme: options.theme,
+          includeArchived: options.includeArchived,
+        }),
+      });
+      const data = await res.json() as any;
+      return { success: res.ok, message: res.ok ? 'List emailed successfully' : `Failed: ${JSON.stringify(data?.detail ?? res.statusText)}`, data };
+    } catch (err) {
+      return { success: false, message: `Error emailing list: ${err}` };
+    }
+  }
+
+  async emailPriorityItems(options: { toEmail?: string; theme?: 'light' | 'dark'; includeArchived?: boolean }): Promise<ListerResponse> {
+    try {
+      const res = await fetch(`${this.baseUrl}/api/items/priority/export/email`, {
+        method: 'POST',
+        headers: this.getAuthHeader(),
+        body: JSON.stringify({
+          toEmail: options.toEmail,
+          theme: options.theme,
+          includeArchived: options.includeArchived,
+        }),
+      });
+      const data = await res.json() as any;
+      return { success: res.ok, message: res.ok ? 'Priority items emailed successfully' : `Failed: ${JSON.stringify(data?.detail ?? res.statusText)}`, data };
+    } catch (err) {
+      return { success: false, message: `Error emailing priority items: ${err}` };
+    }
+  }
 }
 
 // ─── List Name Matching ─────────────────────────────────────────────────────
@@ -400,12 +531,62 @@ export async function handleCommand(input: string): Promise<string> {
       return formatResponse(result);
     }
     
+    case 'export_list': {
+      if (!parsed.entities.listName) {
+        return '❌ Please specify which list to export (e.g., "export my today list as html")';
+      }
+      const result = await resolveList(parsed.entities.listName);
+      if ('error' in result) return result.error;
+      const exportResult = await client.exportList(result.list._id, {
+        format: parsed.entities.format,
+        theme: parsed.entities.theme,
+        includeArchived: parsed.entities.includeArchived,
+      });
+      return formatResponse(exportResult);
+    }
+    
+    case 'export_priority': {
+      const result = await client.exportPriorityItems({
+        format: parsed.entities.format,
+        theme: parsed.entities.theme,
+        includeArchived: parsed.entities.includeArchived,
+      });
+      return formatResponse(result);
+    }
+    
+    case 'email_list': {
+      if (!parsed.entities.listName) {
+        return '❌ Please specify which list to email (e.g., "email my today list to user@example.com")';
+      }
+      const result = await resolveList(parsed.entities.listName);
+      if ('error' in result) return result.error;
+      const emailResult = await client.emailList(result.list._id, {
+        toEmail: parsed.entities.email,
+        theme: parsed.entities.theme,
+        includeArchived: parsed.entities.includeArchived,
+      });
+      return formatResponse(emailResult);
+    }
+    
+    case 'email_priority': {
+      const result = await client.emailPriorityItems({
+        toEmail: parsed.entities.email,
+        theme: parsed.entities.theme,
+        includeArchived: parsed.entities.includeArchived,
+      });
+      return formatResponse(result);
+    }
+    
     default:
       return `❓ I didn't understand that. Try commands like:\n` +
         `• Add "call Notary" to my today list\n` +
         `• Get priority items\n` +
         `• Mark item 123 as done\n` +
-        `• Remove item 456`;
+        `• Remove item 456\n` +
+        `• Export my today list as html\n` +
+        `• Email my today list to user@example.com\n` +
+        `• Export priority items as json\n` +
+        `• Email priority items to user@example.com`;
   }
 }
 

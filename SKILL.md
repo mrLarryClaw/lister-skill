@@ -15,6 +15,10 @@ Use this skill whenever the user wants to manage tasks, to-do items, or lists us
 - **"update item"** — change an item's text or priority
 - **"move item"** — transfer an item to another list
 - **"note for item"** — attach a note to an item
+- **"export list"** — export a list as JSON or HTML
+- **"email list"** — email a list to someone
+- **"export priority"** — export all priority items
+- **"email priority"** — email priority items to someone
 
 ## Configuration
 
@@ -137,6 +141,52 @@ Attach a note/comment to an item.
 
 **Keywords:** `note`, `comment`, `memo`
 
+### 9. Export List
+Export a list to JSON or HTML format.
+
+| Pattern | Example |
+|---------|---------|
+| `export my [list] list` | `export my today list` (defaults to JSON) |
+| `export my [list] list as json` | `export my work list as json` |
+| `export my [list] list as html` | `export my today list as html` |
+| `export my [list] list as html theme dark` | `export my projects list as html theme dark` |
+| `export my [list] list with archived` | `export my today list with archived` |
+
+**Keywords:** `export`, `as json`, `as html`, `theme`, `with archived`
+
+### 10. Email List
+Email a list to yourself or someone else.
+
+| Pattern | Example |
+|---------|---------|
+| `email my [list] list to email@example.com` | `email my today list to maik@example.com` |
+| `email my [list] list` | `email my work list` (sends to your email) |
+| `email my [list] list theme dark` | `email my projects list theme dark` |
+
+**Keywords:** `email`, `to`
+
+### 11. Export Priority Items
+Export all priority/urgent items across all lists.
+
+| Pattern | Example |
+|---------|---------|
+| `export priority items` | `export priority items` (defaults to JSON) |
+| `export priority items as html` | `export priority items as html` |
+| `export priority items as html theme dark` | `export priority items as html theme dark` |
+
+**Keywords:** `export`, `priority`, `urgent`, `important`
+
+### 12. Email Priority Items
+Email all priority items to yourself or someone else.
+
+| Pattern | Example |
+|---------|---------|
+| `email priority items to email@example.com` | `email priority items to maik@example.com` |
+| `email priority items` | `email priority items` (sends to your email) |
+| `email priority items theme dark` | `email priority items theme dark` |
+
+**Keywords:** `email`, `priority`, `urgent`, `important`
+
 ## API Reference
 
 The skill communicates with the Lister REST API. The following endpoints are used internally:
@@ -151,8 +201,12 @@ The skill communicates with the Lister REST API. The following endpoints are use
 | `DELETE` | `/api/items/{id}` | Delete an item |
 | `POST` | `/api/items/{id}/notes` | Add a note to an item |
 | `GET` | `/api/items/priority` | Get all priority items |
+| `POST` | `/api/lists/{id}/export` | Export a list (JSON/HTML) |
+| `POST` | `/api/lists/{id}/export/email` | Email a list |
+| `POST` | `/api/items/priority/export` | Export priority items (JSON/HTML) |
+| `POST` | `/api/items/priority/export/email` | Email priority items |
 
-**Authentication:** Bearer token via `Authorization` header.
+**Authentication:** Bearer token via `X-API-Key` header (NOT Authorization header).
 
 ## Response Format
 
